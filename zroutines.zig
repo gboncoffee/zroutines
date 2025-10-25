@@ -28,35 +28,35 @@ pub const Zroutine = struct {
         return z;
     }
 
-    pub inline fn contextSwitch(self: *Zroutine, target: *Zroutine, arg: ?*anyopaque, comptime uniqueLinkName: []const u8) ?*anyopaque {
-        return asm volatile (std.fmt.comptimePrint(
-                \\  # Save information for latter context restore.
-                \\  movq $RET_{s}, (%rax)
-                \\  movq %rsp, (%rbx)
-                \\  movq %rbp, (%r12)
-                \\
-                \\  # Switch contexts.
-                \\  mov %rcx, %rsp
-                \\  mov %r8, %rbp
-                \\  callq *%rdx
-                \\
-                \\  # If the switched-to function returns, restore the context,
-                \\  # set it's rip to null and skip return emulation.
-                \\  mov (%rbx), %rsp
-                \\  mov (%r12), %rbp
-                \\  movq $0, (%r13)
-                \\  jmp RET_SKIP_RIP_POP_{s}
-                \\
-                \\RET_{s}:
-                \\  # Return emulation: pop the rip because we made a call and
-                \\  # it "returned" without an actual ret instruction on our
-                \\  # stack.
-                \\  add $8, %rsp
-                \\  # Copy the argument to the rax because it was passed to us
-                \\  # via the rsi.
-                \\  mov %rsi, %rax
-                \\RET_SKIP_RIP_POP_{s}:
-            , .{ uniqueLinkName, uniqueLinkName, uniqueLinkName, uniqueLinkName })
+    pub fn contextSwitch(self: *Zroutine, target: *Zroutine, arg: ?*anyopaque) ?*anyopaque {
+        return asm volatile (
+            \\  # Save information for latter context restore.
+            \\  leaq RET(%%rip), %%r9
+            \\  movq %%r9, (%%rax)
+            \\  movq %%rsp, (%%rbx)
+            \\  movq %%rbp, (%%r12)
+            \\
+            \\  # Switch contexts.
+            \\  mov %%rcx, %%rsp
+            \\  mov %%r8, %%rbp
+            \\  callq *%%rdx
+            \\
+            \\  # If the switched-to function returns, restore the context,
+            \\  # set it's rip to null and skip return emulation.
+            \\  movq (%%rbx), %%rsp
+            \\  movq (%%r12), %%rbp
+            \\  movq $0, (%%r13)
+            \\  jmp RET_SKIP_RIP_POP
+            \\
+            \\RET:
+            \\  # Return emulation: pop the rip because we made a call and
+            \\  # it "returned" without an actual ret instruction on our
+            \\  # stack.
+            \\  add $8, %%rsp
+            \\  # Copy the argument to the rax because it was passed to us
+            \\  # via the rsi.
+            \\  mov %%rsi, %%rax
+            \\RET_SKIP_RIP_POP:
             : [ret] "={rax}" (-> ?*anyopaque),
               // Pointers to save the self information.
             : [selfRipPtr] "{rax}" (&self.rip),
@@ -73,18 +73,32 @@ pub const Zroutine = struct {
               [targetRbp] "{r8}" (target.rbp),
               // All registers except by rsp and rbp, as those are properly
               // restored.
-            : "rax", "rbx", "rcx", "rdx", "rdi", "rsi", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15"
-        );
+            : .{
+              .rax = true,
+              .rbx = true,
+              .rcx = true,
+              .rdx = true,
+              .rdi = true,
+              .rsi = true,
+              .r8 = true,
+              .r9 = true,
+              .r10 = true,
+              .r11 = true,
+              .r12 = true,
+              .r13 = true,
+              .r14 = true,
+              .r15 = true,
+            });
     }
 
     pub fn next(self: *Zroutine, target: *Zroutine, arg: ?*anyopaque) !?*anyopaque {
         target.yieldTo = self;
-        return contextSwitch(self, target, arg, "next");
+        return contextSwitch(self, target, arg);
     }
 
     pub fn yield(self: *Zroutine, arg: ?*anyopaque) !void {
         if (self.yieldTo) |target| {
-            _ = contextSwitch(self, target, arg, "yield");
+            _ = contextSwitch(self, target, arg);
         } else {
             return error.NoYieldTarget;
         }
